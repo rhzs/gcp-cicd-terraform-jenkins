@@ -1,0 +1,36 @@
+pipeline {
+    agent any
+    environment {
+        app_repo    = "https://github.com/incubus8/gcp-cicd-terraform-jenkins.git"
+        project_id  = "PROJECT_ID"
+    }
+    stages {
+        stage('Build') {
+            steps {
+                git branch: 'master', url: "${env.app_repo}"
+                sh "echo 'CMD [\"5000\", \"$BUILD_NUMBER\"]' >> app/Dockerfile"
+                sh "docker build -t app --build-arg port=5000 app/."
+                sh "docker tag app gcr.io/${env.project_id}/app:$BUILD_NUMBER"
+                withCredentials([file(credentialsId: 'SERVICE_ACCOUNT_KEY', variable: 'FILE')]) {
+                    sh "docker login -u _json_key --password-stdin https://gcr.io < $FILE"
+                }
+                sh "docker push gcr.io/${env.project_id}/app:$BUILD_NUMBER"
+            }
+        }
+        stage('SonarQube') {
+            steps {
+                script {
+                    scannerHome = tool 'scanner'
+                }
+                withSonarQubeEnv('sonar') {
+                    sh "${scannerHome}/bin/sonar-scanner"
+                }
+            }
+        }
+        stage('Deploy') {
+            steps {
+                sh "kubectl set image deployment/app app=gcr.io/${env.project_id}/app:$BUILD_NUMBER"
+            }
+        }
+    }
+}
